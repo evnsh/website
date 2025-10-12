@@ -52,7 +52,7 @@ export default function Portfolio() {
                 </h1>
                 <div className="space-y-4 text-gray-700 dark:text-gray-300 leading-relaxed">
                   <p>
-                    I’m a 22-year-old engineer passionate about backend architecture and real-time systems. I’m currently building Qomro, a global developer platform, while apprenticing at Amadeus, which powers over 40% of the world’s airline reservations.
+                    22-year-old engineer building Qomro, a global developer platform, while apprenticing at Amadeus, which powers 40% of the world’s airline reservations. Passionate about backend architecture and real-time systems.
                   </p>
                 </div>
               </div>

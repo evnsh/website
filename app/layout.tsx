@@ -9,7 +9,7 @@ import "./globals.css"
 
 export const metadata: Metadata = {
   title: "evan.sh",
-  description: "Backend, Infrastructure & Real-time Systems Developer",
+  description: "22-year-old engineer with a focus on backend architecture and real-time systems",
 }
 
 export default function RootLayout({

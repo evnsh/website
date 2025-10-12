@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: BlogPostPageProps) {
   }
 
   return {
-    title: `${post.title} - Evan MORVAN`,
+    title: `${post.title} - evan.sh`,
     description: post.summary,
   }
 }
