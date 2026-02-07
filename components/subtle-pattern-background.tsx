@@ -1,11 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
+import { useAnimation } from "@/components/animation-provider"
 
 export function SubtlePatternBackground() {
+  const { paused, decelerating, accelerating, finishDeceleration, finishAcceleration } = useAnimation()
   const [pattern, setPattern] = useState("")
   const [time, setTime] = useState(0)
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false)
+  const speedRef = useRef(1.0)
 
   useEffect(() => {
     // Check for reduced motion preference
@@ -22,17 +25,32 @@ export function SubtlePatternBackground() {
   }, [])
 
   useEffect(() => {
-    // Don't animate if user prefers reduced motion
-    if (prefersReducedMotion) {
-      return
+    if (prefersReducedMotion || paused) return
+
+    if (!decelerating && !accelerating) {
+      speedRef.current = 1.0
     }
 
     const interval = setInterval(() => {
-      setTime(t => t + 0.05)
+      if (decelerating) {
+        speedRef.current *= 0.9
+        if (speedRef.current < 0.05) {
+          finishDeceleration()
+          return
+        }
+      } else if (accelerating) {
+        speedRef.current += (1.0 - speedRef.current) * 0.1
+        if (speedRef.current > 0.95) {
+          speedRef.current = 1.0
+          finishAcceleration()
+          return
+        }
+      }
+      setTime(t => t + 0.05 * speedRef.current)
     }, 60)
 
     return () => clearInterval(interval)
-  }, [prefersReducedMotion])
+  }, [prefersReducedMotion, paused, decelerating, accelerating, finishDeceleration, finishAcceleration])
 
   useEffect(() => {
     const chars = ["░", "▒", "▓", "█", "▄", "▀", "▌", "▐", "■", "□", " "]

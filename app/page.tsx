@@ -1,15 +1,15 @@
 import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { SubtlePatternBackground } from "@/components/subtle-pattern-background"
+import { AnimationToggle } from "@/components/animation-toggle"
+import { AnimationResume } from "@/components/animation-effect"
 import { CopyEmailButton } from "@/components/copy-email-button"
 import { getAllBlogPosts } from "@/lib/mdx"
 
 export default async function Portfolio() {
   const posts = await getAllBlogPosts()
   return (
-    <div className="min-h-screen bg-white dark:bg-black text-gray-900 dark:text-white font-mono relative">
-      <SubtlePatternBackground />
-
+    <div className="min-h-screen bg-white/40 dark:bg-black/40 text-gray-900 dark:text-white font-mono relative">
+      <AnimationResume />
       <div className="py-16 relative z-10">
         <div className="max-w-2xl mx-auto px-8 space-y-12">
           <header className="space-y-6">
@@ -22,7 +22,10 @@ export default async function Portfolio() {
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-2">
                   <h1 className="text-2xl font-medium">Evan MORVAN</h1>
-                  <ThemeToggle />
+                  <div className="flex items-center gap-2">
+                    <AnimationToggle />
+                    <ThemeToggle />
+                  </div>
                 </div>
                 <div className="text-sm text-gray-600 dark:text-gray-300">
                   <div className="flex items-center gap-4">
