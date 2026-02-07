@@ -151,6 +151,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    background-color: white;
+  }
+  html.dark {
+    background-color: black;
+  }
   body {
     @apply bg-background text-foreground;
   }
