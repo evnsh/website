@@ -1,11 +1,11 @@
-"use client"
-
 import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { SubtlePatternBackground } from "@/components/subtle-pattern-background"
 import { CopyEmailButton } from "@/components/copy-email-button"
+import { getAllBlogPosts } from "@/lib/mdx"
 
-export default function Portfolio() {
+export default async function Portfolio() {
+  const posts = await getAllBlogPosts()
   return (
     <div className="min-h-screen bg-white dark:bg-black text-gray-900 dark:text-white font-mono relative">
       <SubtlePatternBackground />
@@ -183,17 +183,21 @@ export default function Portfolio() {
               </h1>
 
               <div className="space-y-6">
-                <div>
-                  <div className="flex justify-between items-start gap-4">
-                    <Link
-                      href="/blog/securing-containers"
-                      className="font-medium hover:underline underline-offset-4 decoration-2 transition-all duration-200 flex-1"
-                    >
-                      Securing Containers at Scale: Deep Dive into Kata & Firecracker
-                    </Link>
-                    <span className="text-sm text-gray-500 dark:text-gray-400 font-mono flex-shrink-0">Mar 2025</span>
+                {posts.map((post) => (
+                  <div key={post.slug}>
+                    <div className="flex justify-between items-start gap-4">
+                      <Link
+                        href={`/blog/${post.slug}`}
+                        className="font-medium hover:underline underline-offset-4 decoration-2 transition-all duration-200 flex-1"
+                      >
+                        {post.title}
+                      </Link>
+                      <span className="text-sm text-gray-500 dark:text-gray-400 font-mono flex-shrink-0">
+                        {new Date(post.publishedAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
             </div>
           </section>

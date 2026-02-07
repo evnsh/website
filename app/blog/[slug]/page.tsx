@@ -6,6 +6,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { SubtlePatternBackground } from '@/components/subtle-pattern-background'
 import { CopyLinkButton } from '@/components/copy-link-button'
 import Link from 'next/link'
+import rehypePrettyCode from 'rehype-pretty-code'
 
 interface BlogPostPageProps {
   params: Promise<{
@@ -73,17 +74,26 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
                   {formatDate(post.publishedAt)}
                 </time>
               </div>
-              <p className="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
-                {post.summary}
-              </p>
             </div>
           </header>
 
           {/* Content */}
           <article className="prose prose-neutral dark:prose-invert max-w-none">
-            <MDXRemote 
-              source={post.content} 
+            <MDXRemote
+              source={post.content}
               components={components}
+              options={{
+                mdxOptions: {
+                  rehypePlugins: [
+                    [rehypePrettyCode, {
+                      theme: {
+                        dark: 'vesper',
+                        light: 'github-light',
+                      },
+                    }],
+                  ],
+                },
+              }}
             />
           </article>
 
