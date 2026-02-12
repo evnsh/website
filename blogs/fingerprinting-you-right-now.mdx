@@ -1,0 +1,198 @@
+---
+title: "This Website Is Fingerprinting You Right Now"
+publishedAt: "2025-10-25"
+summary: "The background pattern on this page is unique to your device. No cookies, no localStorage, no accounts. Here's how browser fingerprinting works, why anti-fingerprinting measures fail, and what that means for your privacy."
+---
+
+## Look at the background
+
+There is a faint animated pattern behind this text. It is made of Unicode block characters — `░▒▓█` — flowing in waves across the screen. It looks decorative.
+
+It is not decorative. That pattern is a fingerprint of your device.
+
+I did not store anything on your machine. No cookies. No localStorage. No session tokens. If you clear all your browsing data and come back, the pattern will be the same — unless you are using a privacy browser like Brave or Firefox with `resistFingerprinting`, which inject noise that changes per session. On a standard browser, the pattern is stable across visits, private windows, and data clears. It is derived from the specific combination of hardware and software running on your device right now.
+
+This post explains how.
+
+---
+
+## Signal 1: Canvas
+
+The HTML Canvas API lets JavaScript draw shapes, text, and images to a bitmap. Every browser has it. Every website can use it. The interesting part is what happens when you read the pixels back.
+
+```javascript
+const canvas = document.createElement("canvas")
+canvas.width = 64
+canvas.height = 64
+const ctx = canvas.getContext("2d")
+
+// Opaque background, gradient, text with emoji, curves, shadows
+ctx.fillStyle = "#f0f0f0"
+ctx.fillRect(0, 0, 64, 64)
+
+const grad = ctx.createLinearGradient(0, 0, 64, 64)
+grad.addColorStop(0, "#ff6b6b")
+grad.addColorStop(0.5, "#4ecdc4")
+grad.addColorStop(1, "#45b7d1")
+ctx.fillStyle = grad
+ctx.fillRect(0, 50, 64, 14)
+
+ctx.font = "18px serif"
+ctx.fillStyle = "#333"
+ctx.fillText("evan.sh🌍", 2.7, 20.3)
+
+ctx.beginPath()
+ctx.bezierCurveTo(16, 60, 48, 4, 64, 64)
+ctx.strokeStyle = "rgba(200,100,100,0.5)"
+ctx.stroke()
+
+ctx.shadowBlur = 3
+ctx.shadowColor = "rgba(0,0,0,0.5)"
+ctx.fillStyle = "#666"
+ctx.fillRect(20.5, 8.5, 24, 6)
+```
+
+That code executes the same instructions on every computer. But the pixels it produces are not the same. The `serif` font resolves to different typefaces on macOS, Windows, and Linux. The emoji `🌍` is rendered by the OS-level emoji engine, which differs between Apple, Google, and Microsoft. The fractional coordinates (`2.7, 20.3`) force sub-pixel anti-aliasing, which varies by GPU and driver. The gradient interpolation and shadow blur algorithms differ between Chrome's Skia and Firefox's rendering pipeline.
+
+The same instructions. Different pixels. Different machines.
+
+We hash the resulting pixel data with FNV-1a:
+
+```javascript
+const pixels = ctx.getImageData(0, 0, 64, 64).data
+
+let hash = 2166136261 // FNV-1a offset basis
+for (let i = 0; i < pixels.length; i += 4) {
+  // Hash RGB only — alpha is 0xFF because the opaque background
+  // fill means all composited pixels are fully opaque
+  hash ^= pixels[i];     hash = Math.imul(hash, 16777619)
+  hash ^= pixels[i + 1]; hash = Math.imul(hash, 16777619)
+  hash ^= pixels[i + 2]; hash = Math.imul(hash, 16777619)
+}
+```
+
+One 32-bit hash. No storage required.
+
+---
+
+## Signal 2: WebGL
+
+The WebGL API exposes the GPU vendor and renderer through an extension called `WEBGL_debug_renderer_info`. This gives you strings like `Apple` / `Apple M2 Pro` or `Google Inc. (NVIDIA)` / `ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 ...)`.
+
+```javascript
+const gl = document.createElement("canvas").getContext("webgl")
+const dbg = gl.getExtension("WEBGL_debug_renderer_info")
+const vendor = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)
+const renderer = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+```
+
+This is not subtle. The browser literally tells you what GPU the user has. We fold the strings into the running FNV-1a hash.
+
+---
+
+## Signal 3: Audio
+
+This one is less well known. The Web Audio API can render audio offline through an `OfflineAudioContext`. You create an oscillator, connect it through a dynamics compressor, render 4,500 samples, and read back the resulting waveform.
+
+```javascript
+const ctx = new OfflineAudioContext(1, 4500, 44100)
+const osc = ctx.createOscillator()
+osc.type = "triangle"
+osc.frequency.value = 10000
+
+const comp = ctx.createDynamicsCompressor()
+comp.threshold.value = -50
+comp.knee.value = 40
+comp.ratio.value = 12
+comp.attack.value = 0
+comp.release.value = 0.25
+
+osc.connect(comp)
+comp.connect(ctx.destination)
+osc.start(0)
+
+const buffer = await ctx.startRendering()
+const samples = buffer.getChannelData(0)
+```
+
+The output is a `Float32Array` of audio samples. The mathematical result should be identical everywhere — it is the same oscillator at the same frequency through the same compressor. But floating-point arithmetic is not exact, and every audio stack implements its DSP slightly differently. The rounding differences are tiny — a few bits in the mantissa of each float — but they are consistent per device and different across devices.
+
+We hash the raw bytes of the last 500 rendered samples. This is one of the hardest signals for browsers to spoof, because altering the audio pipeline's floating-point behavior would risk breaking actual audio playback. Firefox's `resistFingerprinting` does attempt to add noise to audio output, but this comes with the trade-off of introducing subtle artifacts into all Web Audio processing.
+
+Safari's private browsing mode takes a different approach: it injects non-deterministic noise into `OfflineAudioContext`, producing different output on every render. We detect this by rendering twice and comparing — if the hashes differ, we know audio is being poisoned and exclude it from the fingerprint. The remaining four signals are still enough to produce a stable hash.
+
+---
+
+## Signal 4: Fonts and system properties
+
+Canvas pixel readback is not the only way to probe a device. The `measureText` API returns the width of a text string in a given font — if the font is installed, the metrics differ from the fallback:
+
+```javascript
+const ctx = document.createElement("canvas").getContext("2d")
+
+for (const font of ["Segoe UI, sans-serif", "SF Pro, sans-serif", ...]) {
+  ctx.font = `72px ${font}`
+  const width = ctx.measureText("mmmmmmmmmmlli").width
+  // width differs based on which fonts are installed
+}
+```
+
+A macOS machine has SF Pro but not Segoe UI. A Windows machine has Segoe UI but not SF Pro. A Linux machine likely has neither. No pixel readback involved — this works even when `getImageData` is being poisoned.
+
+Beyond fonts, browsers expose a constellation of device properties: `navigator.hardwareConcurrency` (CPU core count), `window.devicePixelRatio` (1, 2, or 3 depending on display), `navigator.maxTouchPoints` (0 on desktops, 5+ on touch devices), `Intl.DateTimeFormat().resolvedOptions().timeZone`, screen dimensions, color depth, language preference.
+
+Each of these alone is weak. Millions of people have 8 CPU cores. But the combination of all five signal categories produces a hash that, according to the EFF's [Cover Your Tracks](https://coveryourtracks.eff.org/) research, typically carries 18–20+ bits of entropy from browser properties alone — enough to uniquely identify most visitors within a population of hundreds of thousands.
+
+---
+
+## How it becomes a pattern
+
+Each of the five signals — canvas, WebGL, audio, fonts, system — is hashed independently. This isolation is important: if one signal is unstable (like audio in Safari private browsing), it can be detected and excluded without poisoning the others. The stable signal hashes are then folded into a single 32-bit fingerprint using FNV-1a byte mixing. That one number is expanded into 8 floats through a PRNG (SplitMix32), giving each of the 4 wave functions in the background an independent spatial and temporal frequency. Different hash → different wave parameters → visually distinct pattern. Same device → same hash → same pattern.
+
+---
+
+## What browsers do about it
+
+Browser vendors know about all of this. Here is what they have tried:
+
+**Canvas noise injection.** Brave and Firefox (with `privacy.resistFingerprinting`) inject small perturbations into the pixel data returned by `getImageData`. The noise is deterministic per session — seeded by the origin and a per-session secret — so the hash is stable within a single browsing session but different across sessions.
+
+Your first instinct might be to read the canvas multiple times and average out the noise. This does not work. The noise is not random per read — it is deterministic. Two calls to `getImageData` on the same canvas in the same session return identical results. You cannot cancel out noise that does not vary.
+
+But here is the catch: font metrics via `measureText`, audio DSP rounding, and most system properties are not protected by canvas noise injection. The browser blocked one signal and left the rest exposed.
+
+**WebGL renderer spoofing.** Brave blocks `WEBGL_debug_renderer_info` entirely. Firefox RFP returns generic strings. Safari has started blocking it too. The fallback `gl.RENDERER` returns something unhelpful like `"WebKit WebGL"`.
+
+**User-agent freezing.** Chrome is replacing the dynamic user-agent string with frozen "reduced" user-agent strings as part of the Client Hints migration. Firefox RFP already returns a generic UA.
+
+**Screen dimension rounding.** Firefox RFP reports `screen.width` and `screen.height` as the viewport size, rounded. This removes the display-specific signal.
+
+Each of these measures blocks a single signal. But the fingerprinting approach works by combining many signals, and the browser has to block all of them to be effective.
+
+This is the fundamental asymmetry: **the fingerprinter only needs one signal the browser forgot to block. The browser has to block every signal without breaking the web.**
+
+---
+
+## How real fingerprinting goes further
+
+The background pattern on this page is a proof of concept. It does not phone home, does not store the hash, does not correlate visits.
+
+Real fingerprinting libraries like [FingerprintJS](https://fingerprint.com/) use dozens more signals: CSS feature queries, `Math` implementation differences (`Math.tan` returns slightly different values across engines), performance timing side channels, installed browser plugins, and more. Commercial fingerprinting is an arms race that has been running for over a decade, and the fingerprinters are winning.
+
+The implication is uncomfortable: **cookie consent banners are largely performative for tracking purposes.** A site can comply with every consent requirement — no cookies, no localStorage, no server-side sessions — and still identify returning visitors with high accuracy through fingerprinting alone. The legal frameworks that govern tracking were designed around storage-based identifiers, not statistical inference from rendering pipelines.
+
+---
+
+## What you can do about it
+
+Some caveats first. This fingerprint identifies a *device class*, not a person. Two people with the same laptop model, same OS version, and same browser will get the same pattern. On mobile, the situation is even more homogeneous — millions of iPhones share identical hardware, limited font sets, and restricted canvas output, making mobile Safari substantially harder to fingerprint than desktop browsers. And different browsers on the same machine produce different fingerprints, since the rendering pipeline and user-agent differ.
+
+That said, if you want to actually reduce your fingerprintable surface:
+
+- **Tor Browser** is the gold standard. It normalizes nearly every fingerprintable surface: window size, fonts, timezone, canvas, WebGL, audio. It works by making every user look identical, not by adding noise.
+- **Firefox with `resistFingerprinting`** covers most signals but is not as thorough as Tor Browser — for example, it does not normalize `hardwareConcurrency` or `devicePixelRatio`.
+- **Brave** blocks many vectors but has gaps in font metrics and audio fingerprinting.
+- **Safari** has added some protections (blocking `WEBGL_debug_renderer_info`, limiting font access) but does not attempt comprehensive anti-fingerprinting.
+- **Chrome** with default settings is fully fingerprintable.
+
+The pattern in the background is not going away. If you switch to Tor Browser, it will look like everyone else's. That is the point.

@@ -3,9 +3,10 @@ import { MDXRemote } from 'next-mdx-remote/rsc'
 import { getBlogPost, getAllBlogPosts, formatDate } from '@/lib/mdx'
 import { useMDXComponents } from '@/components/mdx-components'
 import { ThemeToggle } from '@/components/theme-toggle'
-import { SubtlePatternBackground } from '@/components/subtle-pattern-background'
+import { AnimationToggle } from '@/components/animation-toggle'
 import { CopyLinkButton } from '@/components/copy-link-button'
 import Link from 'next/link'
+import rehypePrettyCode from 'rehype-pretty-code'
 
 interface BlogPostPageProps {
   params: Promise<{
@@ -47,9 +48,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
   const components = useMDXComponents({})
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black text-gray-900 dark:text-white font-mono relative">
-      <SubtlePatternBackground />
-      
+    <div className="min-h-screen bg-white/40 dark:bg-black/40 text-gray-900 dark:text-white font-mono relative">
       <div className="py-16 relative z-10">
         <div className="max-w-4xl mx-auto px-8">
           {/* Header */}
@@ -61,7 +60,10 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
               >
                 ← Back to home
               </Link>
-              <ThemeToggle />
+              <div className="flex items-center gap-2">
+                <AnimationToggle />
+                <ThemeToggle />
+              </div>
             </div>
             
             <div className="space-y-4">
@@ -73,17 +75,26 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
                   {formatDate(post.publishedAt)}
                 </time>
               </div>
-              <p className="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
-                {post.summary}
-              </p>
             </div>
           </header>
 
           {/* Content */}
           <article className="prose prose-neutral dark:prose-invert max-w-none">
-            <MDXRemote 
-              source={post.content} 
+            <MDXRemote
+              source={post.content}
               components={components}
+              options={{
+                mdxOptions: {
+                  rehypePlugins: [
+                    [rehypePrettyCode, {
+                      theme: {
+                        dark: 'vesper',
+                        light: 'github-light',
+                      },
+                    }],
+                  ],
+                },
+              }}
             />
           </article>
 

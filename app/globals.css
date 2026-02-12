@@ -151,6 +151,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    background-color: white;
+  }
+  html.dark {
+    background-color: black;
+  }
   body {
     @apply bg-background text-foreground;
   }
@@ -162,11 +168,30 @@
     border-radius: 0 !important;
     font-size: inherit !important;
   }
-  
+
   /* Ensure code blocks take full width */
   pre {
     white-space: pre !important;
     word-wrap: normal !important;
     overflow-wrap: normal !important;
+  }
+
+  /* Override shiki theme backgrounds to match the site's code block colors */
+  pre[data-theme] {
+    background-color: rgb(245 245 245) !important; /* neutral-100 */
+  }
+  .dark pre[data-theme] {
+    background-color: rgb(23 23 23) !important; /* neutral-900 */
+  }
+  code[data-theme],
+  code[data-theme] span {
+    color: var(--shiki-light);
+    background-color: transparent !important;
+  }
+
+  /* Shiki dual-theme: swap to dark text colors in dark mode */
+  .dark code[data-theme],
+  .dark code[data-theme] span {
+    color: var(--shiki-dark) !important;
   }
 }

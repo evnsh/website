@@ -1,0 +1,196 @@
+---
+title: "Making 9,000 RFCs Searchable: The Engineering Behind rfc.guru"
+publishedAt: "2026-02-07"
+summary: "Building a semantic search engine for nine thousand RFCs using vector embeddings, SQLite, batch processing pipelines, and a two-level search architecture. Exploring how to make keyword search understand meaning without requiring complex infrastructure."
+---
+
+## Introduction
+
+There are over nine thousand RFCs. They define the internet, from how email works to how your browser negotiates a TLS handshake. They are also, for the most part, completely unsearchable.
+
+The official RFC Editor site offers a search bar. You type a keyword, you get a list. It works the way search worked in 2003. If you know the exact RFC number, great. If you remember a phrase from the title, maybe. But if you're trying to find "that RFC about how DNS resolvers should handle truncated responses", good luck.
+
+I wanted to fix that. What started as a weekend project to build a better RFC reader turned into a months-long deep dive into full-text search, vector embeddings, batch processing pipelines, and the surprisingly difficult problem of making old documents feel alive.
+
+This is the story of building [rfc.guru](https://rfc.guru).
+
+---
+
+## The First Version: Just Make It Work
+
+The initial idea was simple. Download every RFC, throw them into a search index, put a nice frontend on it. Ship it.
+
+I started with the data. The IETF publishes a tarball of every RFC ever written, `RFC-all.tar.gz` from `rfc-editor.org`. Nearly ten thousand documents. JSON metadata files with titles, authors, abstracts, publication dates, and relationship graphs (which RFCs obsolete which, which ones update others). Plain text files with the full content. I wrote a bootstrap script to download the archive, extract it, and normalize the metadata into a consistent shape.
+
+For search, I reached for [SQLite](https://sqlite.org/) with [FTS5](https://www.sqlite.org/fts5.html). It's fast, it's embedded, it needs zero infrastructure. I built an indexer that reads every RFC's metadata and the first 50KB of its text content, then inserts it into a virtual table with [Porter stemming](https://en.wikipedia.org/wiki/Stemming) and Unicode support:
+
+```sql
+CREATE VIRTUAL TABLE rfc_search USING fts5(
+  rfc_id UNINDEXED,
+  doc_id, title, abstract, content,
+  keywords, categories,
+  status UNINDEXED, pub_date UNINDEXED,
+  prefix='2 3 4',
+  tokenize='porter unicode61'
+);
+```
+
+The `prefix='2 3 4'` bit is important. It builds prefix indexes for two, three, and four-character terms, which makes autocomplete-style search fast. The Porter stemmer means "routing" matches "routes" and "routed." For a first pass, this was remarkably good.
+
+The search API uses a priority system: first check if the query is an RFC number (someone typing "791" probably wants RFC 791), then search titles, then fall back to full content search. This covers the 80% case well. Type BGP, get BGP RFCs. Type HTTP/2, get the HTTP/2 spec.
+
+I built the frontend in React with TypeScript, styled it with [Tailwind](https://tailwindcss.com/), and gave it a [debounced](https://en.wikipedia.org/wiki/Debounce#Software) search with a 150ms delay that shows results as you type. Keyboard navigation with arrow keys, Enter to select, Escape to clear. The kind of search that feels instant.
+
+It was good. But it wasn't enough.
+
+---
+
+## The Problem With Keywords
+
+Here's the thing about keyword search: it only works when you already know the words.
+
+RFCs are written by committees of engineers over decades. The terminology shifts. What one RFC calls a "relay agent" another calls a "proxy." Concepts that are semantically identical get described in completely different language. And the most interesting searches, the ones where you're *exploring* rather than looking up a known document, are exactly the ones where keyword search falls apart.
+
+I kept running into the same frustration. I'd search for something like "how to handle certificate chain validation errors" and get nothing useful, because no RFC uses that exact phrasing. The knowledge was in there, buried across dozens of documents, but the words didn't match.
+
+I needed search that understood *meaning*, not just strings.
+
+---
+
+## Enter Embeddings
+
+The idea behind [vector embeddings](https://en.wikipedia.org/wiki/Word_embedding) is deceptively simple. You take a piece of text and convert it into a list of numbers, a vector, that captures its semantic meaning. Think of it like plotting text on a map: texts that mean similar things end up close together, even if they use completely different words. "Certificate validation failure" and "X.509 chain verification error" would land in the same neighborhood on that map, even though they share almost no words.
+
+To measure how close two texts are, you compare the angle between their vectors, a metric called [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity). A score of 1.0 means they're pointing in the same direction (same meaning), 0.0 means they're perpendicular (unrelated). The intuition matters more than the formula here: similar text, similar direction.
+
+The engineering to make this work across nine thousand documents is where it gets interesting.
+
+---
+
+## Chunking: The Hardest Easy Problem
+
+You can't just embed an entire RFC. These documents range from a few pages to hundreds of pages. Embedding models have token limits, and even if they didn't, a single vector can't capture the semantic richness of a 200-page protocol specification. You'd lose all the nuance.
+
+So you chunk. You split each document into smaller pieces, embed each piece separately, and search at the chunk level. This way, when someone searches for "TCP congestion window behavior during slow start" you can find the specific *section* of RFC 5681 that discusses exactly that.
+
+But chunking is harder than it sounds. Split on arbitrary token boundaries and you'll cut sentences in half, destroying meaning. Split on paragraphs and your chunks will be wildly different sizes, some too small to carry semantic weight, others too large to be precise.
+
+I built a `TextChunker` that splits on sentence boundaries with a target of 256 tokens per chunk and 32 tokens of overlap between adjacent chunks. The overlap is important: it ensures that concepts spanning a chunk boundary still appear intact in at least one chunk. I used [tiktoken](https://github.com/openai/tiktoken) with the `cl100k_base` encoding to count tokens accurately.
+
+But before chunking, the text needs cleaning. RFCs have a very specific format: page headers repeated on every page, form feed characters, ASCII art diagrams, tables of contents that are just lists of section numbers. None of this carries semantic meaning, and all of it confuses embedding models.
+
+I wrote an `RFCSanitizer` that strips all of this out: page headers and footers, form feed characters, table of contents sections, ASCII art (detected by density of special characters), control characters, and decorative divider lines. What's left is clean, semantic text, the actual *content* of the RFC.
+
+Each chunk gets tagged with its RFC ID, chunk index, character offsets, and token count. A unique ID like `rfc822_chunk0042` makes it easy to trace results back to their source.
+
+---
+
+## The Batch Processing Pipeline
+
+Now I had chunks. Hundreds of thousands of them. I needed to embed them all.
+
+I chose Google's `gemini-embedding-001` model, 768-dimensional output optimized for retrieval tasks. The model supports a `RETRIEVAL_DOCUMENT` task type that tunes the embedding for search scenarios. But calling an API 400,000+ times one-by-one would take forever and cost a fortune in overhead.
+
+This is where batch processing comes in. [Vertex AI](https://cloud.google.com/vertex-ai) supports batch embedding: you upload a [JSONL](https://jsonlines.org/) file of requests to Google Cloud Storage and get back a file of results. I wrote a pipeline that reads every RFC, sanitizes and chunks the text, formats the chunks as batch requests, uploads them to GCS, and submits the batch job. Vertex AI handles up to 30,000 requests per batch, so the entire corpus fits in a manageable number of jobs.
+
+The trade-off with batch processing is latency: requests can take up to 24 hours to complete, which gets annoying when you're iterating on your chunking strategy and want to see how a change affects search quality. But it's worth it. Batch endpoints typically offer around 50% cost savings over synchronous calls, and when you're embedding hundreds of thousands of chunks, that adds up fast.
+
+---
+
+## Two-Level Search: Fast, Then Precise
+
+With embeddings in hand, I needed a search architecture that was both fast and precise. Searching every chunk of every RFC for every query would be too slow, even cosine similarity adds up when you're doing it hundreds of thousands of times.
+
+The solution is a two-level search. First, I compute a document-level embedding for each RFC (derived from its title and abstract). When a query comes in, I embed the query, then compute cosine similarity against all ~9,000 document-level embeddings. This is fast: 9,000 comparisons, not 400,000.
+
+From this first pass, I take the top 10 most promising RFCs. Then, and only then, I search their chunk-level embeddings. For each of those 10 documents, I find the single chunk with the highest similarity to the query.
+
+The final ranking uses a weighted blend: 40% document-level similarity, 60% best-chunk similarity. This balances document relevance (is this RFC *about* the right topic?) with section relevance (does it contain a passage that *specifically* answers the query?). The 60/40 split toward chunks means that a highly relevant section in a broadly related RFC can outrank a vaguely relevant section in a more topically aligned document.
+
+The results include the matched chunk text, so the frontend can show users exactly *which part* of the RFC matched their query, not just the title and abstract.
+
+---
+
+## Storing Vectors in SQLite
+
+I needed somewhere to store all these embeddings. The obvious choices, [Pinecone](https://www.pinecone.io/), [Weaviate](https://github.com/weaviate/weaviate), [pgvector](https://github.com/pgvector/pgvector), all add infrastructure complexity. I was already using SQLite for keyword search. Could I use it for vectors too?
+
+Yes. I store embeddings as binary blobs, raw [Float32Arrays](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array) packed into SQLite BLOB columns. The schema is straightforward:
+
+```sql
+CREATE TABLE rfc_embeddings (
+  rfc_id INTEGER PRIMARY KEY,
+  doc_id TEXT, title TEXT, abstract TEXT,
+  embedding BLOB,
+  embedding_dim INTEGER
+);
+
+CREATE TABLE rfc_chunks (
+  rfc_id INTEGER, chunk_index INTEGER,
+  chunk_text TEXT,
+  embedding BLOB,
+  embedding_dim INTEGER,
+  PRIMARY KEY (rfc_id, chunk_index)
+);
+```
+
+There's no vector index. I'm doing brute-force cosine similarity. For 9,000 document-level embeddings, this takes a few milliseconds. For the chunk-level search over 10 documents, it's negligible. At this scale, the simplicity of brute force beats the complexity of [approximate nearest neighbor](https://en.wikipedia.org/wiki/Nearest_neighbor_search#Approximate_nearest_neighbor) indexes.
+
+The database runs in [WAL](https://www.sqlite.org/wal.html) mode for concurrent reads and opens read-only in production. The entire semantic search system is two SQLite files and a single API key. No vector database cluster to manage. No connection pools. It just works.
+
+---
+
+## Categorization: The Other AI Problem
+
+While I was solving search, I also wanted to solve *browsing*. Not everyone comes to rfc.guru with a specific query. Some people want to explore: "show me all the RFCs about DNS" or "what security-related RFCs have been published recently?"
+
+RFCs don't come with useful categories. The IETF has working groups, but their names are often acronyms that don't help casual browsing. I needed a categorization system.
+
+My first attempt was straightforward. I sent each RFC's title, abstract, and the first chunk of its content to [GPT-4o-mini](https://platform.openai.com/docs/models/gpt-4o-mini) via [OpenAI's Batch API](https://platform.openai.com/docs/guides/batch) and asked it to assign a category. The model did the categorization job a little *too* well. Instead of broad groupings, it created hyper-specific labels. Some RFCs got tagged "BGP" others "BGP Implementation" others "BGP Communities" when all I wanted was a single "BGP" category. I ended up with thousands of categories, most of them redundant.
+
+So I took that entire list of categories, fed it back to a model, and asked it to collapse redundant ones into canonical groups. Remove "BGP Implementation" and "BGP Communities" keep "BGP." Merge "TLS Handshake" and "TLS Configuration" into "TLS." That process distilled thousands of labels down to 191 canonical categories, from "3GPP" and "5G" to "WebSocket" and "YANG" covering the major topic areas of internet standards.
+
+Then I re-ran the categorization with the canonical list as a constraint, asking the model to assign one to three categories per RFC with a confidence score:
+
+```json
+[
+  {"label": "DNS", "confidence": 0.95},
+  {"label": "Security", "confidence": 0.72}
+]
+```
+
+The Explore page groups RFCs by these categories with collapsible sections, showing counts and average confidence scores. It turns a flat list of nine thousand documents into something you can actually browse.
+
+---
+
+## The Frontend: Making It Feel Right
+
+The best search infrastructure in the world doesn't matter if the interface feels slow or clunky. Most of my time went to the backend (maybe a 70/30 split), but the frontend details are what make rfc.guru feel like a proper tool rather than a database viewer.
+
+The search has two modes, keyword and semantic, with a toggle to switch between them. Keyword search returns results with traditional title and abstract snippets. Semantic search returns results with the matched chunk text, so you can see the specific passage that's relevant.
+
+The RFC reader parses raw RFC text into something pleasant to read. It detects [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)/[8174](https://www.rfc-editor.org/rfc/rfc8174) keywords (MUST, SHOULD, MAY) and highlights them with hover tooltips explaining their normative meaning. If you've ever read an RFC and had to go look up what "SHOULD NOT" actually means in context, this saves you the round trip and forces the clarification right where you need it. The reader also auto-links RFC references in the text: when an RFC mentions "[RFC 5321]", that becomes a clickable link. Hover over it and you get a preview card with the referenced RFC's title, status, abstract, and publication date, fetched and cached on demand.
+
+A table of contents is automatically parsed from the RFC text structure, with collapsible sections and smooth scroll-to navigation. The reader tracks your recently viewed RFCs, all stored locally on your device in [localStorage](https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage), nothing sent anywhere. The homepage shows your five most recent visits so you can pick up where you left off.
+
+For typography, titles are set in Canela and RFC content is rendered in [Berkeley Mono](https://usgraphics.com/products/berkeley-mono), a typeface that makes dense technical text genuinely pleasant to read. Dark mode respects your system preference and can be toggled manually. The design is deliberately minimal: the content is the interface.
+
+---
+
+## What I Learned
+
+Building rfc.guru taught me that the gap between "search that works" and "search that *understands*" is enormous, and that bridging it doesn't require enormous infrastructure.
+
+SQLite is absurdly capable. FTS5 gives you a production-quality full-text search engine in a single file. Binary blob storage works fine for vector search at this scale. WAL mode makes it concurrent. At ~10,000 documents, you don't need [Elasticsearch](https://github.com/elastic/elasticsearch). You don't need a dedicated vector database. You need to understand your data and your scale. This obviously won't hold at a million documents, and that's fine. Not every project needs to be architected for a scale it will never reach.
+
+Chunking strategy matters more than model choice. A mediocre embedding model with good chunking will outperform a great model with bad chunking. Sentence-aware splits, appropriate overlap, and thorough text cleaning are where the real quality comes from.
+
+Batch processing is underrated. When you need to process hundreds of thousands of items through an API, batch endpoints save an order of magnitude in cost. The 24-hour wait can feel painful when you're iterating, but the ~50% cost reduction makes it the obvious choice for bulk workloads.
+
+And the two-level search architecture, fast document-level pass followed by precise chunk-level refinement, is a pattern I'd use again without hesitation. It gives you the speed of searching 9,000 items with the precision of searching 400,000.
+
+The RFCs define the infrastructure we all depend on. They deserve a search experience that actually works. That's what rfc.guru tries to be: a way to find the right RFC, fast, whether you know exactly what you're looking for or you're just exploring.
+
+Nine thousand documents. Sixty-seven million words. Seven hundred sixty-eight dimensions. One SQLite file.
+
+Sometimes the best architecture is the simplest one that could possibly work.

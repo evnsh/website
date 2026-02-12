@@ -46,26 +46,25 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
         {children}
       </blockquote>
     ),
-    code: ({ children }) => (
-      <code className="bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm font-mono text-gray-800 dark:text-gray-200">
-        {children}
-      </code>
-    ),
-    pre: ({ children, ...props }) => {
-      // Handle the case where children might be a code element
-      const codeContent = typeof children === 'object' && children?.props?.children 
-        ? children.props.children 
-        : children;
-        
+    code: ({ children, ...props }) => {
+      // rehype-pretty-code adds data-theme to code blocks; skip styling those
+      if ('data-theme' in props) {
+        return <code {...props}>{children}</code>
+      }
       return (
-        <pre 
-          className="bg-neutral-100 dark:bg-neutral-900 p-4 rounded-lg overflow-x-auto mb-6 text-sm font-mono border border-neutral-200 dark:border-neutral-700 w-full whitespace-pre"
-          {...props}
-        >
+        <code className="bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm font-mono text-gray-800 dark:text-gray-200">
           {children}
-        </pre>
-      );
+        </code>
+      )
     },
+    pre: ({ children, ...props }) => (
+      <pre
+        className="bg-neutral-100 dark:bg-neutral-900 p-4 rounded-lg overflow-x-auto mb-6 text-sm font-mono border border-neutral-200 dark:border-neutral-700 w-full whitespace-pre"
+        {...props}
+      >
+        {children}
+      </pre>
+    ),
     a: ({ href, children }) => (
       <a
         href={href}

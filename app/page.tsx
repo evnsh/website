@@ -1,15 +1,15 @@
-"use client"
-
 import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { SubtlePatternBackground } from "@/components/subtle-pattern-background"
+import { AnimationToggle } from "@/components/animation-toggle"
+import { AnimationResume } from "@/components/animation-effect"
 import { CopyEmailButton } from "@/components/copy-email-button"
+import { getAllBlogPosts } from "@/lib/mdx"
 
-export default function Portfolio() {
+export default async function Portfolio() {
+  const posts = await getAllBlogPosts()
   return (
-    <div className="min-h-screen bg-white dark:bg-black text-gray-900 dark:text-white font-mono relative">
-      <SubtlePatternBackground />
-
+    <div className="min-h-screen bg-white/40 dark:bg-black/40 text-gray-900 dark:text-white font-mono relative">
+      <AnimationResume />
       <div className="py-16 relative z-10">
         <div className="max-w-2xl mx-auto px-8 space-y-12">
           <header className="space-y-6">
@@ -22,7 +22,10 @@ export default function Portfolio() {
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-2">
                   <h1 className="text-2xl font-medium">Evan MORVAN</h1>
-                  <ThemeToggle />
+                  <div className="flex items-center gap-2">
+                    <AnimationToggle />
+                    <ThemeToggle />
+                  </div>
                 </div>
                 <div className="text-sm text-gray-600 dark:text-gray-300">
                   <div className="flex items-center gap-4">
@@ -183,17 +186,21 @@ export default function Portfolio() {
               </h1>
 
               <div className="space-y-6">
-                <div>
-                  <div className="flex justify-between items-start gap-4">
-                    <Link
-                      href="/blog/securing-containers"
-                      className="font-medium hover:underline underline-offset-4 decoration-2 transition-all duration-200 flex-1"
-                    >
-                      Securing Containers at Scale: Deep Dive into Kata & Firecracker
-                    </Link>
-                    <span className="text-sm text-gray-500 dark:text-gray-400 font-mono flex-shrink-0">Mar 2025</span>
+                {posts.map((post) => (
+                  <div key={post.slug}>
+                    <div className="flex justify-between items-start gap-4">
+                      <Link
+                        href={`/blog/${post.slug}`}
+                        className="font-medium hover:underline underline-offset-4 decoration-2 transition-all duration-200 flex-1"
+                      >
+                        {post.title}
+                      </Link>
+                      <span className="text-sm text-gray-500 dark:text-gray-400 font-mono flex-shrink-0">
+                        {new Date(post.publishedAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
             </div>
           </section>
