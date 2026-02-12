@@ -84,6 +84,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
               source={post.content}
               components={components}
               options={{
+                blockJS: false,
                 mdxOptions: {
                   rehypePlugins: [
                     [rehypePrettyCode, {

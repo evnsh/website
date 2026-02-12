@@ -7,11 +7,12 @@ import { Suspense } from "react"
 import { ThemeProvider } from "@/components/theme-provider"
 import { AnimationProvider } from "@/components/animation-provider"
 import { SubtlePatternBackground } from "@/components/subtle-pattern-background"
+import { getAge } from "@/lib/age"
 import "./globals.css"
 
 export const metadata: Metadata = {
   title: "evan.sh",
-  description: "22-year-old engineer with a focus on backend architecture and real-time systems",
+  description: `${getAge()}-year-old engineer with a focus on backend architecture and real-time systems`,
 }
 
 export default function RootLayout({
