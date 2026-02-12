@@ -4,6 +4,7 @@ import { AnimationToggle } from "@/components/animation-toggle"
 import { AnimationResume } from "@/components/animation-effect"
 import { CopyEmailButton } from "@/components/copy-email-button"
 import { getAllBlogPosts } from "@/lib/mdx"
+import { Age } from "@/components/age"
 
 export default async function Portfolio() {
   const posts = await getAllBlogPosts()
@@ -55,7 +56,7 @@ export default async function Portfolio() {
                 </h1>
                 <div className="space-y-4 text-gray-700 dark:text-gray-300 leading-relaxed">
                   <p>
-                    22-year-old engineer building Qomro, a global developer platform, while apprenticing at Amadeus, which powers 40% of the world’s airline reservations. Passionate about backend architecture and real-time systems.
+                    <Age />-year-old engineer building Qomro, a global developer platform, while apprenticing at Amadeus, which powers 40% of the world's airline reservations. Passionate about backend architecture and real-time systems.
                   </p>
                 </div>
               </div>
